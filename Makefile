@@ -1,4 +1,4 @@
-BINARY_NAME=skillshare-dl
+BINARY_NAME=skillshare-offline
 BUILD_DIR=dist
 
 .PHONY: all clean build-all windows linux darwin

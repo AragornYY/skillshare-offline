@@ -55,10 +55,10 @@ This repository includes a GitHub Actions workflow that automatically builds and
 
 ```bash
 # Basic usage
-./skillshare-dl --url "class-url" --cookie-file cookies.txt
+./skillshare-offline --url "class-url" --cookie-file cookies.txt
 
 # Example
-./skillshare-dl \
+./skillshare-offline \
   --url "https://www.skillshare.com/en/classes/3d-modeling-for-beginners/123456" \
   --cookie-file cookies.txt \
   --output-dir ./downloads

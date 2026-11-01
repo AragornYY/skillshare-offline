@@ -48,7 +48,7 @@ func (c *Config) Flags() *flag.FlagSet {
 
 func main() {
 	log.SetFlags(0)
-	log.SetPrefix("skillshare-dl: ")
+	log.SetPrefix("skillshare-offline: ")
 
 	cmds := []acmd.Command{
 		{
@@ -72,7 +72,7 @@ func main() {
 	}
 
 	r := acmd.RunnerOf(cmds, acmd.Config{
-		AppName:        "skillshare-dl",
+		AppName:        "skillshare-offline",
 		AppDescription: "Skillshare Offline Downloader",
 		Version:        "1.0.0",
 	})
