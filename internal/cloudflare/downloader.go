@@ -13,10 +13,42 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/grafov/m3u8"
 	"github.com/sardanioss/httpcloak"
 )
+
+const (
+	// downloadAttempts is the total number of tries for a single HTTP download.
+	downloadAttempts = 3
+	// retryBaseDelay is multiplied by the failed attempt number before retrying.
+	retryBaseDelay = time.Second
+)
+
+// withRetry runs op up to downloadAttempts times, backing off between attempts.
+// It gives up immediately when the context is done so cancellation stays responsive.
+func withRetry(ctx context.Context, what string, op func() error) error {
+	var err error
+	for attempt := 1; attempt <= downloadAttempts; attempt++ {
+		if err = op(); err == nil {
+			return nil
+		}
+		if ctx.Err() != nil || attempt == downloadAttempts {
+			break
+		}
+
+		delay := time.Duration(attempt) * retryBaseDelay
+		fmt.Printf("Warning: %s failed (attempt %d/%d): %v; retrying in %s\n", what, attempt, downloadAttempts, err, delay)
+
+		select {
+		case <-time.After(delay):
+		case <-ctx.Done():
+			return err
+		}
+	}
+	return err
+}
 
 // Downloader handles downloading videos from Cloudflare Streams
 type Downloader struct {
@@ -151,17 +183,7 @@ func (d *Downloader) GetAvailableResolutions(ctx context.Context, manifestURL st
 }
 
 func (d *Downloader) fetchMasterPlaylist(ctx context.Context, urlStr string) (*m3u8.MasterPlaylist, error) {
-	resp, err := d.httpClient.Get(ctx, urlStr)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Close()
-
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("HTTP %d fetching playlist", resp.StatusCode)
-	}
-
-	body, err := resp.Bytes()
+	body, err := d.fetchPlaylist(ctx, urlStr)
 	if err != nil {
 		return nil, err
 	}
@@ -178,14 +200,33 @@ func (d *Downloader) fetchMasterPlaylist(ctx context.Context, urlStr string) (*m
 	return playlist.(*m3u8.MasterPlaylist), nil
 }
 
-func (d *Downloader) downloadSegments(ctx context.Context, manifestURL, baseURL, outputDir string, isAudio bool) ([]string, error) {
-	resp, err := d.httpClient.Get(ctx, manifestURL)
+// fetchPlaylist downloads a playlist body, retrying transient failures such as
+// response body reads that exceed the client timeout.
+func (d *Downloader) fetchPlaylist(ctx context.Context, urlStr string) ([]byte, error) {
+	var body []byte
+	err := withRetry(ctx, "playlist fetch", func() error {
+		resp, err := d.httpClient.Get(ctx, urlStr)
+		if err != nil {
+			return err
+		}
+		defer resp.Close()
+
+		if resp.StatusCode != 200 {
+			return fmt.Errorf("HTTP %d fetching playlist", resp.StatusCode)
+		}
+
+		body, err = resp.Bytes()
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Close()
 
-	body, err := resp.Bytes()
+	return body, nil
+}
+
+func (d *Downloader) downloadSegments(ctx context.Context, manifestURL, baseURL, outputDir string, isAudio bool) ([]string, error) {
+	body, err := d.fetchPlaylist(ctx, manifestURL)
 	if err != nil {
 		return nil, err
 	}
@@ -272,6 +313,12 @@ func (d *Downloader) downloadSegments(ctx context.Context, manifestURL, baseURL,
 }
 
 func (d *Downloader) downloadFile(ctx context.Context, urlStr, path string) error {
+	return withRetry(ctx, "download of "+filepath.Base(path), func() error {
+		return d.downloadFileOnce(ctx, urlStr, path)
+	})
+}
+
+func (d *Downloader) downloadFileOnce(ctx context.Context, urlStr, path string) error {
 	resp, err := d.httpClient.Get(ctx, urlStr)
 	if err != nil {
 		return err
